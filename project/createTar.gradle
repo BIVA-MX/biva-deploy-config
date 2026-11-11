@@ -78,7 +78,6 @@ task copyLauncherBase(type:Copy) {
     } else {
       fileMode = 0755
     }
-    fileMode = 0755
     def conf = loadConfiguration()
     def properties = conf.flatten()
     def profileName = getSystemProperty("app", "app")
@@ -91,6 +90,11 @@ task copyLauncherBase(type:Copy) {
 			properties.put(k, v)        
         }
       }
+    }
+    // Gradle 9 removio archivesBaseName de project.properties: los scripts que usan
+    // @archivesBaseName@ (start.sh, cleanLogs.sh, Dockerfile) quedaban sin reemplazar.
+    if (GradleVersion.current() >= GradleVersion.version("8.4")) {
+        properties.put('archivesBaseName', base.archivesName.get())
     }
     filter(ReplaceTokens, tokens: properties)
 }
@@ -116,11 +120,18 @@ task copyLaunchers(type:Copy) {
         }
       }
     }
+    // Gradle 9 removio archivesBaseName de project.properties: los scripts que usan
+    // @archivesBaseName@ (start.sh, cleanLogs.sh, Dockerfile) quedaban sin reemplazar.
+    if (GradleVersion.current() >= GradleVersion.version("8.4")) {
+        properties.put('archivesBaseName', base.archivesName.get())
+    }
     filter(ReplaceTokens, tokens: properties)
 }
 
 task explodeJar(type: Copy) {
-    def jarFile = file("${buildDir}/libs/${archivesBaseName}-${version}.jar")
+    // Gradle 9 removio project.archivesBaseName; base.archivesName funciona desde Gradle 7.
+    def baseName = (GradleVersion.current() >= GradleVersion.version("8.4")) ? base.archivesName.get() : project.archivesBaseName
+    def jarFile = file("${buildDir}/libs/${baseName}-${version}.jar")
     def outputDir = file("${buildDir}/deploy/${version}/dist")
 
     from jarFile
@@ -133,6 +144,18 @@ task tarDistFile(type: Tar) {
     archiveBaseName = project.name
     compression Compression.GZIP
     destinationDirectory = "${buildDir}" as File
+
+    // Tar no hereda los permisos del filesystem: marcar los .sh como ejecutables
+    // para no tener que hacer chmod en el servidor.
+    eachFile { details ->
+        if (details.name.endsWith('.sh')) {
+            if (GradleVersion.current() >= GradleVersion.version("8.3")) {
+                details.permissions { unix(0755) }
+            } else {
+                details.mode = 0755
+            }
+        }
+    }
 }
 
 task createTar(dependsOn:bootJar) {
